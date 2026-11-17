@@ -12,6 +12,7 @@ import 'image_viewer_page.dart';
 import 'kit.dart';
 import 'player_page.dart';
 import 'search_page.dart';
+import 'subs_page.dart';
 import 'widgets.dart';
 
 /// 加载占位行：跟真实列表同样的行高和图标底座，避免「点进去先卡一下」
@@ -318,6 +319,17 @@ class _BrowsePageState extends State<BrowsePage> {
   Future<void> _showActions(Entry e) async {
     final tone = Theme.of(context).extension<Tone>()!;
     final fav = app.isFav(e.path);
+    // 字幕作业列表还没拉过：先补一次，否则「已存在任务」永远判不出来，
+    // 有作业的文件也会显示成「生成字幕」（点了才发现已经有了）。
+    // 只等 1.5 秒：服务器慢/不通时别把长按菜单卡在这儿，请求在后台继续跑，
+    // 下次再点就是准的。
+    if (app.subsEnabled && !app.subsLoaded) {
+      await app
+          .refreshSubs()
+          .timeout(const Duration(milliseconds: 1500), onTimeout: () => false);
+    }
+    if (!mounted) return;
+    final subsJob = app.subsEnabled && !e.isDir ? app.subsJobFor(app.source, e.path) : null;
     await showSheet<void>(
       context,
       builder: (ctx) => Column(
@@ -357,6 +369,23 @@ class _BrowsePageState extends State<BrowsePage> {
               onTap: () {
                 Navigator.pop(ctx);
                 app.downloadEntry(e);
+              },
+            ),
+          // 视频/音频：排听译。已经有作业就变成「查看字幕作业」直接跳队列页
+          if (!e.isDir &&
+              (e.kind == 'video' || e.kind == 'audio') &&
+              app.subsEnabled)
+            _SheetRow(
+              icon: 'translate',
+              label: subsJob == null ? '生成字幕' : '查看字幕作业',
+              onTap: () async {
+                Navigator.pop(ctx);
+                if (subsJob != null) {
+                  _openSubs();
+                  return;
+                }
+                if (!await ensureWrite(context, app)) return;
+                await app.addSubs(e);
               },
             ),
           if (e.isDir)
@@ -407,6 +436,13 @@ class _BrowsePageState extends State<BrowsePage> {
           ],
         ],
       ),
+    );
+  }
+
+  /// 听译队列页（文件页的「查看字幕作业」和设置页共用同一个页面）
+  void _openSubs() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SubsPage(app: app)),
     );
   }
 

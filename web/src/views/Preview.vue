@@ -4,8 +4,8 @@
    · 底部一层：进度条 + 时间 +（-10s / 播放暂停 / +10s / 音轨 / 播放列表 / 倍速 / 全屏）
    · 点画面切换控件；长按画面 3× 快放 */
 import Ico from '../components/Ico.vue'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { api, humanSize, type Entry } from '../api'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { api, ApiError, humanSize, type Entry, type SubJob, type SubSeg } from '../api'
 
 const props = defineProps<{ entry: Entry; source?: string; direct?: string; gallery?: Entry[]; index?: number }>()
 const emit = defineEmits<{ close: [] }>()
@@ -39,7 +39,7 @@ let hideTimer: number | undefined
 
 const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
 const speed = ref(Number(localStorage.getItem('mfm_rate') || localStorage.getItem('yunxia.speed') || 1))
-const sheet = ref<'none' | 'speed' | 'audio' | 'list' | 'more'>('none')
+const sheet = ref<'none' | 'speed' | 'audio' | 'list' | 'more' | 'sub'>('none')
 const jumpHint = ref('')
 const resumed = ref('')
 const resumePos = ref(0)   // 点胶囊时要用
@@ -64,6 +64,13 @@ function togglePlay() {
 }
 
 let hintTimer: number | undefined
+/** 播放器里的小提示（复用 jumphint 那层胶囊） */
+function hint(text: string, ms = 1800) {
+  jumpHint.value = text
+  window.clearTimeout(hintTimer)
+  hintTimer = window.setTimeout(() => (jumpHint.value = ''), ms)
+}
+
 function jump(sec: number) {
   const v = videoEl.value
   if (!v) return
@@ -156,6 +163,284 @@ function jumpResume() {
   v.currentTime = resumePos.value
   v.play().catch(() => {})
   resumed.value = ''
+}
+
+/* ───────── 听译字幕 ─────────
+   字幕不能铺在整块 stage 上：视频按 max-width/max-height 居中，四周是黑边，
+   铺满全屏时竖屏视频的字幕会飘到黑边里。这里量一次 video 的渲染矩形，
+   把绝对定位的字幕层钉在那块矩形上（resize / 全屏 / 换片都会重量）。 */
+type SubMode = 'off' | 'src' | 'bi'
+type SubSize = 's' | 'm' | 'l'
+const SUB_SIZES: { id: SubSize; label: string }[] = [
+  { id: 's', label: '小' },
+  { id: 'm', label: '中' },
+  { id: 'l', label: '大' },
+]
+
+/* 模板里不能直接摸 localStorage（会被编译成 _ctx.localStorage），一律走这两个函数 */
+function lsRead(k: string): string | null {
+  try {
+    return localStorage.getItem(k)
+  } catch {
+    return null
+  }
+}
+function lsWrite(k: string, v: string) {
+  try {
+    localStorage.setItem(k, v)
+  } catch {
+    /* 隐私模式写不进去就算了 */
+  }
+}
+
+let savedMode: SubMode = 'bi'      // 用户上次选的显示方式
+const subMode = ref<SubMode>('off')
+const subSize = ref<SubSize>('m')
+const subSegs = ref<SubSeg[]>([])
+const subJob = ref<SubJob | null>(null)
+const subIdx = ref(-1)
+const subBusy = ref(false)
+const subBox = ref({ left: 0, top: 0, width: 0, height: 0 })
+const vwrapEl = ref<HTMLElement | null>(null)
+let subTimer: number | undefined
+let subRaf = 0
+
+/* 首次进播放器：沿用上次的显示方式与字号（没有就默认双语） */
+;(() => {
+  const m = lsRead('mfm_sub_mode')
+  if (m === 'off' || m === 'src' || m === 'bi') savedMode = m
+  const s = lsRead('mfm_sub_size')
+  if (s === 's' || s === 'm' || s === 'l') subSize.value = s
+})()
+
+function setSubMode(m: SubMode) {
+  subMode.value = m
+  savedMode = m
+  lsWrite('mfm_sub_mode', m)
+}
+function setSubSize(s: SubSize) {
+  subSize.value = s
+  lsWrite('mfm_sub_size', s)
+}
+
+function measureSub() {
+  const v = videoEl.value
+  const w = vwrapEl.value
+  if (!v || !w) return
+  const vr = v.getBoundingClientRect()
+  const wr = w.getBoundingClientRect()
+  if (vr.width < 2 || vr.height < 2) return
+  subBox.value = {
+    left: Math.round(vr.left - wr.left),
+    top: Math.round(vr.top - wr.top),
+    width: Math.round(vr.width),
+    height: Math.round(vr.height),
+  }
+}
+
+/** 二分找当前这一句；段间空隙返回 -1（字幕消失，不闪断上一句） */
+function findSeg(t: number): number {
+  const a = subSegs.value
+  if (!a.length) return -1
+  let lo = 0
+  let hi = a.length - 1
+  let hit = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (Number(a[mid][0]) <= t) {
+      hit = mid
+      lo = mid + 1
+    } else hi = mid - 1
+  }
+  if (hit < 0) return -1
+  return t < Number(a[hit][1]) ? hit : -1
+}
+
+/* timeupdate 只有 4Hz，字幕会明显滞后：播放中就用 rAF 逐帧对一次（二分，开销可忽略） */
+function subLoop() {
+  subRaf = requestAnimationFrame(subLoop)
+  const v = videoEl.value
+  if (!v || !subSegs.value.length) {
+    if (subIdx.value !== -1) subIdx.value = -1
+    return
+  }
+  const i = findSeg(v.currentTime)
+  if (i !== subIdx.value) subIdx.value = i
+}
+
+const subCur = computed<SubSeg | null>(() =>
+  subIdx.value >= 0 ? subSegs.value[subIdx.value] || null : null,
+)
+const subSrcText = computed(() => {
+  const s = subCur.value
+  if (!s || s.length < 3) return ''
+  return String(s[2] ?? '').trim()
+})
+const subTrText = computed(() => {
+  const s = subCur.value
+  if (!s || s.length < 4) return ''
+  const t = String(s[3] ?? '').trim()
+  return t && t !== subSrcText.value ? t : ''
+})
+const subOn = computed(() => subMode.value !== 'off' && !!subBox.value.width)
+/** 双语：译文主行 + 原文小字；只有原文时原文自己当主行 */
+const subMain = computed(() => {
+  if (subMode.value === 'src') return subSrcText.value
+  return subTrText.value || subSrcText.value
+})
+const subSub = computed(() => (subMode.value === 'bi' && subTrText.value ? subSrcText.value : ''))
+const subFont = computed(() => {
+  const base = subSize.value === 's' ? 15 : subSize.value === 'l' ? 24 : 19
+  return Math.round(base * (subBox.value.width > 1000 ? 1.2 : 1))
+})
+/* 控件条占底部约 110px：控件亮起时把字幕抬起来，别被吃掉 */
+const subBottom = computed(() =>
+  ctrl.value ? Math.min(112, Math.max(16, Math.round(subBox.value.height * 0.36))) : 16,
+)
+
+const subRunning = computed(() => {
+  const s = subJob.value?.state
+  return s === 'queued' || s === 'asr' || s === 'translating'
+})
+const subStatus = computed(() => {
+  const j = subJob.value
+  if (j && subRunning.value) {
+    if (j.state === 'queued') return '排队中'
+    return `${j.state === 'translating' ? '翻译中' : '转写中'} ${Math.round(j.pct || 0)}%`
+  }
+  if (j && j.state === 'error') return `失败：${j.error || j.msg || '转写出错'}`
+  if (j && j.state === 'cancelled') return '已停止'
+  if (subSegs.value.length) return `已完成 · ${subSegs.value.length} 句`
+  return '未生成'
+})
+const subGenLabel = computed(() => {
+  if (subRunning.value) return '转写中…'
+  const s = subJob.value?.state
+  if (s === 'error' || s === 'cancelled') return '重新生成'
+  return '生成听译'
+})
+
+function stopSubPoll() {
+  window.clearTimeout(subTimer)
+  subTimer = undefined
+}
+
+/** 整块重取：翻译是就地补每段的第 4 列，序号没变，增量请求拿不到 */
+async function loadSubSegs(id: string) {
+  try {
+    const d = await api.subsDetail(id, 0)
+    if (d.segments_list) subSegs.value = d.segments_list
+    subJob.value = d
+  } catch {
+    /* 拿不到就维持现状 */
+  }
+}
+
+function startSubPoll() {
+  stopSubPoll()
+  const tick = async () => {
+    const j = subJob.value
+    if (!j) return
+    const was = j.state
+    try {
+      const r = await api.subsDetail(j.id, subSegs.value.length)
+      if (r.segments_list && r.segments_list.length) {
+        subSegs.value = subSegs.value.concat(r.segments_list)
+      }
+      subJob.value = r
+      if (r.state === 'done') {
+        if (was !== 'done') await loadSubSegs(r.id)
+        stopSubPoll()
+        if (subMode.value === 'off' && savedMode !== 'off') subMode.value = savedMode
+        return
+      }
+      if (r.state === 'error' || r.state === 'cancelled') {
+        stopSubPoll()
+        return
+      }
+    } catch {
+      /* 网络抖一下就等下一轮，别把轮询停了 */
+    }
+    subTimer = window.setTimeout(tick, 2000)
+  }
+  subTimer = window.setTimeout(tick, 600)
+}
+
+/** 打开视频/换片：有现成字幕就直接挂上，转写中的接着往下拿 */
+async function attachSubs() {
+  stopSubPoll()
+  subJob.value = null
+  subSegs.value = []
+  subIdx.value = -1
+  subMode.value = 'off'
+  if (!isVideo.value) return
+  const src = props.source || ''
+  const path = curEntry.value.path
+  if (!path) return
+  let found = false
+  try {
+    const r = await api.subsFor(src, path)
+    if (r.found && r.id && r.segments && r.segments.length) {
+      found = true
+      subSegs.value = r.segments
+      try {
+        const d = await api.subsDetail(r.id, 0)
+        subJob.value = d
+        if (d.segments_list && d.segments_list.length) subSegs.value = d.segments_list
+        if (subRunning.value) startSubPoll()
+      } catch {
+        /* 详情拿不到也还有 segs，照样能显示 */
+      }
+      if (savedMode !== 'off') subMode.value = savedMode
+    }
+  } catch {
+    /* 服务端没开听译：就当没有字幕 */
+  }
+  if (found) return
+  // 没现成字幕：看看是不是已经排在队里（文件页点过「生成字幕」/ 队列页里点了重新转写）
+  try {
+    const l = await api.subsList()
+    const hit = l.jobs.find((j) => j.path === path && (!src || !j.source || j.source === src))
+    if (!hit) return
+    subJob.value = hit
+    if (hit.state === 'done' && hit.segments) {
+      await loadSubSegs(hit.id)
+      if (subSegs.value.length && savedMode !== 'off') subMode.value = savedMode
+    } else if (hit.state === 'queued' || hit.state === 'asr' || hit.state === 'translating') {
+      startSubPoll()
+    }
+  } catch {
+    /* 同上 */
+  }
+}
+
+async function genSubs() {
+  if (subBusy.value) return
+  subBusy.value = true
+  try {
+    const j = await api.subsAdd(props.source || '', curEntry.value.path, curEntry.value.name)
+    subJob.value = j
+    if (j.state === 'done') {
+      await loadSubSegs(j.id)
+      if (subSegs.value.length) {
+        if (savedMode !== 'off') subMode.value = savedMode
+        hint('字幕已就绪')
+      } else {
+        hint('这条还没有段落可用')
+      }
+      return
+    }
+    if (j.state === 'error') {
+      hint(`转写失败：${j.error || j.msg || '未知错误'}`)
+      return
+    }
+    startSubPoll()
+    hint(j.state === 'queued' ? '已排队，转完自动显示' : '正在转写…')
+  } catch (e) {
+    hint(e instanceof ApiError ? `提交失败：${e.message}` : `提交失败：${e}`)
+  } finally {
+    subBusy.value = false
+  }
 }
 
 
@@ -601,23 +886,58 @@ function fullscreen() {
 
 onMounted(() => {
   load()
+  attachSubs()
+  subRaf = requestAnimationFrame(subLoop)
+  window.setTimeout(measureSub, 80)
   window.addEventListener('keydown', onKey)
+  document.addEventListener('fullscreenchange', onFsChange)
   document.body.style.overflow = 'hidden'
 })
 function onResize() {
   vw.value = window.innerWidth
+  measureSub()
+}
+function onFsChange() {
+  // 全屏切换后 video 的渲染尺寸变了，字幕层要重新贴上去
+  measureSub()
+  window.setTimeout(measureSub, 160)
+}
+/** 元数据到手：视频的真实显示区域这时才有，字幕层在这里量第一次 */
+function onMeta() {
+  applySpeed()
+  resume()
+  onTime()
+  measureSub()
+  window.setTimeout(measureSub, 120)
 }
 
 onMounted(() => {
   window.addEventListener('resize', onResize)
 })
 
+/* 播放列表换片：字幕跟着换（同一条视频的听译结果按 来源+路径 取） */
+watch(
+  () => curEntry.value.path,
+  () => {
+    if (isVideo.value) attachSubs()
+  },
+)
+/* 字幕到手时视频可能还没 metadata：这时候量出来的框是默认 300×150，
+   等下一次 resize / 元数据再量一次，别让字幕层卡在错的位置。 */
+watch(
+  () => subSegs.value.length,
+  () => measureSub(),
+)
+
 onUnmounted(() => {
   window.clearTimeout(hintTimer)
   window.clearTimeout(hideTimer)
   window.clearTimeout(pressTimer)
   window.clearTimeout(lpTimer)
+  stopSubPoll()
+  cancelAnimationFrame(subRaf)
   window.removeEventListener('resize', onResize)
+  document.removeEventListener('fullscreenchange', onFsChange)
   window.clearTimeout(commitTimer)
   for (const u of imgCache.values()) {
     if (u.startsWith('blob:')) URL.revokeObjectURL(u)
@@ -644,7 +964,7 @@ onUnmounted(() => {
       <p v-if="loading" class="hint">加载中…</p>
       <p v-else-if="error" class="hint">{{ error }}</p>
 
-      <div v-else-if="isVideo" class="vwrap" @click="ctrl = !ctrl; showCtrl()">
+      <div v-else-if="isVideo" ref="vwrapEl" class="vwrap" @click="ctrl = !ctrl; showCtrl()">
         <video
           ref="videoEl"
           :src="url"
@@ -653,13 +973,33 @@ onUnmounted(() => {
           class="video"
           @timeupdate="onTime"
           @seeked="onTime"
-          @loadedmetadata="(applySpeed(), resume(), onTime())"
+          @loadedmetadata="onMeta"
+          @loadeddata="measureSub"
+          @canplay="measureSub"
           @play="playing = true; showCtrl()"
           @pause="playing = false; ctrl = true"
           @pointerdown="pressStart"
           @pointerup="pressEnd"
           @pointerleave="pressEnd"
         ></video>
+
+        <!-- 字幕层：贴在视频真实显示的那块矩形上（left/top/width/height 由 measureSub 量出来） -->
+        <div
+          v-if="subOn && sheet !== 'sub'"
+          class="sub-layer"
+          :style="{
+            left: subBox.left + 'px',
+            top: subBox.top + 'px',
+            width: subBox.width + 'px',
+            height: subBox.height + 'px',
+          }"
+        >
+          <div class="subs" :style="{ bottom: subBottom + 'px', fontSize: subFont + 'px' }">
+            <!-- 双语：译文在上（大字），原文在下（小字）—— 和 App 端一致 -->
+            <span v-if="subMain" class="sub-main">{{ subMain }}</span>
+            <span v-if="subSub" class="sub-src">{{ subSub }}</span>
+          </div>
+        </div>
 
         <div v-if="resumed" class="resume-pill" @click.stop="jumpResume">{{ resumed }}</div>
         <div v-if="jumpHint" class="jumphint">{{ jumpHint }}</div>
@@ -680,6 +1020,9 @@ onUnmounted(() => {
               </button>
               <button class="pbtn" title="前进 10 秒" @click="jump(10)"><Ico name="fwd10" :size="22" /></button>
               <button class="pbtn" title="音轨" @click="sheet = 'audio'"><Ico name="volume" :size="22" /></button>
+              <button class="pbtn" title="字幕" :class="{ on: subMode !== 'off' }" @click="sheet = 'sub'">
+                <Ico name="translate" :size="22" />
+              </button>
               <button v-if="plist.length" class="pbtn" title="播放列表" @click="sheet = 'list'">
                 <Ico name="playlist" :size="22" />
               </button>
@@ -730,6 +1073,43 @@ onUnmounted(() => {
           <div class="sh-head"><b>音轨</b><button class="sh-close" @click="sheet = 'none'"><Ico name="close" :size="16" /></button></div>
           <div class="seg"><button class="on">默认音轨</button></div>
           <p class="sh-note">网页端只能用视频里的默认音轨，多音轨切换要等浏览器支持（App 里可切）</p>
+        </div>
+
+        <!-- 听译字幕：开关 / 字号 / 状态 / 生成 -->
+        <div v-if="sheet === 'sub'" class="sheet" @click.stop>
+          <div class="sh-head">
+            <b>字幕</b>
+            <button class="sh-close" @click="sheet = 'none'"><Ico name="close" :size="16" /></button>
+          </div>
+
+          <div class="sh-label">显示</div>
+          <div class="seg">
+            <button :class="{ on: subMode === 'off' }" @click="setSubMode('off')">关</button>
+            <button :class="{ on: subMode === 'src' }" :disabled="!subSegs.length" @click="setSubMode('src')">原文</button>
+            <button :class="{ on: subMode === 'bi' }" :disabled="!subSegs.length" @click="setSubMode('bi')">双语</button>
+          </div>
+
+          <div class="sh-label">字号</div>
+          <div class="seg">
+            <button
+              v-for="z in SUB_SIZES"
+              :key="z.id"
+              :class="{ on: subSize === z.id }"
+              @click="setSubSize(z.id)"
+            >{{ z.label }}</button>
+          </div>
+
+          <div class="sub-status">
+            <span class="sub-state">{{ subStatus }}</span>
+            <span
+              v-if="!subSegs.length || (subJob && (subJob.state === 'error' || subJob.state === 'cancelled'))"
+              class="sub-gen-wrap"
+            >
+              <button class="sub-gen" :disabled="subBusy || subRunning" @click="genSubs">{{ subGenLabel }}</button>
+            </span>
+          </div>
+          <div v-if="subRunning" class="sub-prog"><i :style="{ width: Math.min(100, Math.max(2, subJob?.pct || 0)) + '%' }"></i></div>
+          <p class="sh-note">{{ subSegs.length ? '字幕随播放自动切换；转写还没跑完时会边转边显。' : '生成听译会在这台服务器上跑 faster-whisper，长片要等一会儿。' }}</p>
         </div>
       </div>
 
@@ -1044,6 +1424,103 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.45);
   margin: 12px 2px 0;
   line-height: 1.5;
+}
+
+/* ---------- 听译字幕层 ---------- */
+/* 这块矩形由 measureSub 按 video 的 getBoundingClientRect 算出来，
+   所以字幕只会落在画面里，不会飘到黑边上。 */
+.sub-layer {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.subs {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+  line-height: 1.32;
+  transition: bottom 0.18s ease;
+  /* 字号由行内 fontSize 给，子行按 em 缩 */
+}
+
+.sub-src {
+  font-size: 0.74em;
+  color: rgba(214, 220, 230, 0.86);
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.9),
+    0 1px 4px rgba(0, 0, 0, 0.75);
+  max-width: 100%;
+}
+
+.sub-main {
+  font-size: 1em;
+  font-weight: 600;
+  color: #fff;
+  /* 描边 + 投影：亮背景下也读得清 */
+  text-shadow:
+    0 0 1px #000,
+    0 0 3px rgba(0, 0, 0, 0.92),
+    0 2px 6px rgba(0, 0, 0, 0.8);
+  max-width: 100%;
+}
+
+.sub-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.sub-state {
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-gen-wrap {
+  margin-left: auto;
+  flex: none;
+}
+
+.sub-gen {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 14px;
+  background: var(--ac);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.sub-gen:disabled {
+  opacity: 0.5;
+}
+
+.sub-prog {
+  height: 3px;
+  margin-top: 10px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.sub-prog i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--ac);
+  transition: width 0.4s ease;
 }
 
 .jumphint,

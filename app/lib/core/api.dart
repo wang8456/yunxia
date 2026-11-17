@@ -232,6 +232,78 @@ class Api {
   Future<Map<String, dynamic>> sources() =>
       _send('GET', '/meta/sources', timeout: const Duration(seconds: 10));
 
+  // ---------- 听译（服务端本机 faster-whisper 转写 + OpenAI 兼容翻译） ----------
+
+  /// 队列全景：jobs + 开关 + 模型 + 依赖 + 翻译配置（一次拿全，别东拼西凑）
+  Future<Map<String, dynamic>> subsList() =>
+      _send('GET', '/subs', timeout: const Duration(seconds: 15));
+
+  /// 排一个转写任务。lang 只管这次：auto 交给 whisper 自己判
+  Future<Map<String, dynamic>> subsAdd(
+    String source,
+    String path, {
+    String? name,
+    String? lang,
+  }) => _send(
+    'POST',
+    '/subs/add',
+    body: {
+      'source': source,
+      'path': path,
+      if (name != null && name.isNotEmpty) 'name': name,
+      if (lang != null && lang.isNotEmpty) 'lang': lang,
+    },
+  );
+
+  Future<Map<String, dynamic>> subsCancel(String id) =>
+      _send('POST', '/subs/cancel', body: {'id': id});
+
+  Future<Map<String, dynamic>> subsDelete(String id) =>
+      _send('POST', '/subs/delete', body: {'id': id});
+
+  /// 转完再翻。409 = 还没转完 / 服务端没配翻译，别当网络错误吞掉
+  Future<Map<String, dynamic>> subsTranslate(String id, {String? to}) => _send(
+    'POST',
+    '/subs/translate',
+    body: {'id': id, if (to != null && to.isNotEmpty) 'to': to},
+  );
+
+  /// 同时转写几个（服务端照这个数开 worker）
+  Future<Map<String, dynamic>> subsSetMaxActive(int n) =>
+      _send('POST', '/subs/config', body: {'max_active': n});
+
+  /// 这个文件有没有现成字幕：{found,id,lang,dur,segments:[[起,止,原文,译文]]}
+  Future<Map<String, dynamic>> subsFor(String source, String path) => _send(
+    'GET',
+    '/subs/for',
+    query: {'source': source, 'path': path},
+  );
+
+  /// 任务详情。since>0 只回新段落（边转边显靠这个，别每 2 秒拉一遍全量）
+  Future<Map<String, dynamic>> subsDetail(String id, {int since = 0}) => _send(
+    'GET',
+    '/subs/${Uri.encodeComponent(id)}',
+    query: since > 0 ? {'since': '$since'} : null,
+  );
+
+  /// SRT 文本（播放器导出用）。服务端按 Content-Disposition 给文件名，
+  /// 这里只要正文 —— 文件名按任务名自己拼，更可控。
+  Future<String> subsSrtText(String id, {bool trans = false}) async {
+    final req = await _http.openUrl(
+      'GET',
+      _uri('/subs/${Uri.encodeComponent(id)}/srt', trans ? {'trans': '1'} : null),
+    );
+    final h = await _headers();
+    h.forEach(req.headers.set);
+    final res = await req.close().timeout(const Duration(seconds: 30));
+    final text = await utf8.decoder.bind(res).join();
+    if (res.statusCode >= 400) {
+      throw ApiError(res.statusCode, _reason(text, res.statusCode));
+    }
+    return text;
+  }
+
+
   /// 首页储存卡：磁盘容量 + 当前来源按类型的文件分析（服务端带 6 小时缓存）
   Future<Map<String, dynamic>> storageAnalysis(String source) => _send(
     'GET',

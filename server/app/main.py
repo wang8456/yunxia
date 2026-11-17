@@ -21,6 +21,7 @@ from .routers import chat as chat_router
 from .routers import fs as fs_router
 from .routers import play as play_router
 from .routers import search as search_router
+from .routers import subs as subs_router
 from .routers import thumb as thumb_router
 
 APP_VERSION = "1.0.0"
@@ -66,6 +67,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.include_router(auth_router.router, prefix="/api/v1")
 app.include_router(fs_router.router, prefix="/api/v1")
 app.include_router(search_router.router, prefix="/api/v1")
+app.include_router(subs_router.router, prefix="/api/v1")   # 听译（本机 faster-whisper）
 app.include_router(thumb_router.router, prefix="/api/v1")
 app.include_router(play_router.router, prefix="/api/v1/play")
 # 对话沿用 /hermes/api/* 这套路径（前端就是这么写的，别改）
@@ -119,6 +121,7 @@ def sources(device: Device) -> dict:
         "sources": out,
         "default": CFG.default_source,
         "chat": {"enabled": bool(CFG.chat.enabled and CFG.chat.api_key and CFG.chat.base)},
+        "subs": {"enabled": bool(CFG.subs.enabled), "model": CFG.subs.model},
     }
 
 
@@ -145,6 +148,7 @@ def healthz() -> dict:
         "uptime": round(time.time() - STARTED_AT, 1),
         "sources": [s.id for s in CFG.sources if s.enabled],
         "chat": bool(CFG.chat.enabled),
+        "subs": bool(CFG.subs.enabled),
     }
 
 

@@ -37,6 +37,10 @@ class Session {
   int dlMaxActive = 2;
   bool dlNotify = true;
 
+  /// 听译：转写语言（auto/ja/en/zh）。服务端 /subs/config 只管并发数，
+  /// 语言是「这次任务」的参数，所以记在本机、排任务时带上去。
+  String subsLang = 'auto';
+
   Session({
     required this.server,
     this.token,
@@ -51,6 +55,7 @@ class Session {
     this.fileOrder = 'asc',
     this.dlMaxActive = 2,
     this.dlNotify = true,
+    this.subsLang = 'auto',
   });
 
   static Future<File> _fileHandle() async {
@@ -88,6 +93,7 @@ class Session {
           fileOrder: (j['fileOrder'] as String?) ?? 'asc',
           dlMaxActive: (j['dlMaxActive'] as num?)?.toInt() ?? 2,
           dlNotify: j['dlNotify'] as bool? ?? true,
+          subsLang: j['subsLang'] as String? ?? 'auto',
           favorites: ((j['favorites'] as List?) ?? const [])
               .map((e) => (e as Map).cast<String, dynamic>())
               .toList(),
@@ -111,6 +117,7 @@ class Session {
         'lastTab': lastTab,
         'dlMaxActive': dlMaxActive,
         'dlNotify': dlNotify,
+        'subsLang': subsLang,
         'gridMode': gridMode,
         'fileSort': fileSort,
         'fileOrder': fileOrder,

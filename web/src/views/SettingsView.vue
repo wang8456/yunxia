@@ -1,9 +1,9 @@
 <script setup lang="ts">
-/* 设置页 —— 状态卡（口令入口）→ 外观 → 播放器 → 更多 → 关于
-   开源版只保留这些：听译 / 翻译 / 下载队列 / CloudDrive2 这些定制入口都拆掉了。 */
+/* 设置页 —— 状态卡（口令入口）→ 外观 → 播放器 → 听·译 → 更多 → 关于
+   听·译 分区只在服务端 subs.enabled 为 true 时渲染（入口只到「听译队列」，不进主导航）。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import Ico from '../components/Ico.vue'
-import { api } from '../api'
+import { api, ApiError, type SubState } from '../api'
 import { confirmBox } from '../ask'
 
 const props = defineProps<{ view: 'list' | 'grid'; theme: string }>()
@@ -54,7 +54,7 @@ function icoOf(s?: Src) {
 }
 const curIco = computed(() => icoOf(cur.value))
 const cur = computed(() => srcs.value.find((s) => s.id === curId.value))
-const curName = computed(() => cur.value?.name || 'NAS')
+const curName = computed(() => cur.value?.name || '服务器')
 
 const srcOpen = ref(false)
 
@@ -90,6 +90,9 @@ async function load() {
     if (srcs.value.length && !srcs.value.some((s) => s.id === curId.value)) {
       curId.value = r.default || srcs.value[0].id
     }
+    // 听译分区只在服务端 subs.enabled 为 true 时出现
+    subsOn.value = !!r.subs?.enabled
+    if (subsOn.value) loadSubs()
   } catch {
     srcs.value = []
   }
@@ -134,6 +137,41 @@ function clearPos() {
   localStorage.removeItem('yunxia.pos')
   localStorage.removeItem('mfm_pos')
   emit('toast', '播放记录已清空')
+}
+
+/* ---------- 听·译 ---------- */
+const subsOn = ref(false)
+const subState = ref<SubState | null>(null)
+const LANGS = [
+  { id: 'auto', label: '自动' },
+  { id: 'ja', label: '日语' },
+  { id: 'en', label: '英语' },
+  { id: 'zh', label: '中文' },
+]
+const curLang = computed(() => subState.value?.language || 'auto')
+const maxActive = computed(() => subState.value?.max_active || 1)
+const trReady = computed(() => !!subState.value?.translate?.ready)
+
+async function loadSubs() {
+  try {
+    const r = await api.subsList()
+    subState.value = r
+    subsOn.value = !!r.enabled
+  } catch {
+    /* 服务端没装 faster-whisper 之类：整块不显示，别在设置里挂一个坏入口 */
+    subsOn.value = false
+  }
+}
+
+async function setMaxActive(n: number) {
+  if (n === maxActive.value) return
+  try {
+    const r = await api.subsSetMaxActive(n)
+    if (subState.value) subState.value.max_active = r.max_active
+    emit('toast', `同时转写 ${r.max_active} 条`)
+  } catch (e) {
+    emit('toast', `改不了：${e instanceof ApiError ? e.message : e}`)
+  }
 }
 
 async function doLogout() {
@@ -264,6 +302,72 @@ onMounted(load)
         </span>
       </div>
     </div>
+
+    <template v-if="subsOn">
+      <div class="sec">听·译</div>
+      <div class="gcard">
+        <div class="grow static">
+          <span class="gico" style="background: color-mix(in srgb, var(--ac) 14%, var(--surface)); color: var(--ac)">
+            <Ico name="translate" :size="18" />
+          </span>
+          <span class="gtx">
+            <b>转写模型</b>
+            <i>{{ subState ? `${subState.model} · ${subState.device}/${subState.compute_type}` : '读取中…' }}</i>
+          </span>
+          <span class="pill on">已开启</span>
+        </div>
+        <div class="hline" />
+        <div class="grow col">
+          <span class="rowline">
+            <span class="gico plain"><Ico name="translate" :size="18" /></span>
+            <b>识别语言</b>
+            <i class="dim">服务端 subs.language</i>
+          </span>
+          <span class="chips">
+            <span
+              v-for="l in LANGS"
+              :key="l.id"
+              class="chip ro"
+              :class="{ on: curLang === l.id }"
+            >{{ l.label }}</span>
+          </span>
+        </div>
+        <div class="hline" />
+        <div class="grow col">
+          <span class="rowline">
+            <span class="gico plain"><Ico name="recent" :size="18" /></span>
+            <b>同时转写</b>
+            <i class="dim">一次跑几条</i>
+          </span>
+          <span class="chips">
+            <button
+              v-for="n in [1, 2, 3]"
+              :key="n"
+              class="chip"
+              :class="{ on: maxActive === n }"
+              @click="setMaxActive(n)"
+            >{{ n }} 条</button>
+          </span>
+        </div>
+        <div class="hline" />
+        <div class="grow static">
+          <span class="gico plain"><Ico name="chat" :size="18" /></span>
+          <span class="gtx">
+            <b>翻译</b>
+            <i>{{ trReady ? `已配置 · ${subState?.translate.model || '模型已填'}` : '未配置（在 config.json 填 subs.translate 或 chat 段）' }}</i>
+          </span>
+          <span class="pill" :class="{ on: trReady }">{{ trReady ? '可用' : '未配置' }}</span>
+        </div>
+        <div class="hline" />
+        <button class="grow" @click="emit('go', 'subs')">
+          <span class="gico" style="background: color-mix(in srgb, var(--ac) 14%, var(--surface)); color: var(--ac)">
+            <Ico name="playlist" :size="18" />
+          </span>
+          <span class="gtx"><b>听译队列</b><i>看进度 · 取消 · 翻译 · 导出 SRT</i></span>
+          <Ico class="gchev" name="chevron-right" :size="17" />
+        </button>
+      </div>
+    </template>
 
     <div class="sec">更多</div>
     <div class="gcard">
@@ -750,6 +854,11 @@ onMounted(load)
   background: var(--ac);
   border-color: var(--ac);
   color: var(--onac);
+}
+
+/* 识别语言是服务端 config.json 定的，这里只展示，点不动 */
+.chip.ro {
+  cursor: default;
 }
 
 .tsw {

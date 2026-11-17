@@ -229,3 +229,90 @@ class _NavBtn extends StatelessWidget {
     );
   }
 }
+
+/// 深色面板里的选项胶囊（播放设置 / 字幕面板共用同一套尺寸与配色）
+class _PanelChip extends StatelessWidget {
+  final String label;
+  final bool on;
+  final VoidCallback? onTap;
+
+  const _PanelChip({required this.label, required this.on, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    const c = Color(0xFF1677F8);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        decoration: BoxDecoration(
+          color: on ? c : const Color(0x1FFFFFFF),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: on ? Colors.white : const Color(0xFFCFCFD4),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 深色面板底部的整条操作按钮（字幕面板用）
+class _PanelBtn extends StatelessWidget {
+  final String label;
+  final String? icon;
+  final VoidCallback? onTap;
+  final bool primary;
+
+  const _PanelBtn({
+    required this.label,
+    this.icon,
+    this.onTap,
+    this.primary = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 42,
+          decoration: BoxDecoration(
+            color: primary ? null : const Color(0x1FFFFFFF),
+            gradient: primary
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF1681FF), Color(0xFF0868E9)],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[
+                UIIcon(icon!, size: 17, color: Colors.white),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

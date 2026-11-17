@@ -6,6 +6,7 @@ import '../core/ui_icons.dart';
 import 'downloads_page.dart';
 import 'kit.dart';
 import 'settings_more_page.dart';
+import 'subs_page.dart';
 import 'widgets.dart';
 
 /// 设置页 —— 照旧版前端：品牌栏 → 副标题 → 大标题 → 存储卡 →
@@ -20,6 +21,21 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   App get app => widget.app;
+
+  /// 听译语言的选项（下标 = 服务端认的 lang 值）
+  static const _langCodes = ['auto', 'ja', 'en', 'zh'];
+  static const _langLabels = ['自动', '日语', '英语', '中文'];
+
+  bool _subsAsked = false;
+
+  /// 队列数据只在真正用到时拉一次：进设置页本来不该发请求
+  void _ensureSubs() {
+    if (!app.subsEnabled || app.subsLoaded || _subsAsked) return;
+    _subsAsked = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) app.refreshSubs();
+    });
+  }
 
   /// 本机下载只留一句摘要：详情都在下载队列页里
   String _qSub() {
@@ -227,6 +243,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final tone = Theme.of(context).extension<Tone>()!;
+    _ensureSubs();
     final src = app.sources.firstWhere((s) => s['id'] == app.source,
         orElse: () => const {'id': 'local', 'name': '本机', 'writable': true});
     final (ico, bg, fg) = _iconOf(src, tone);
@@ -612,6 +629,117 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
+              // 听译：服务端没开（/meta/sources subs.enabled=false）就整块不出现，
+              // 免得摆一排按不动的行
+              if (app.subsEnabled) ...[
+                const SectionHead('听·译'),
+                GroupCard(
+                  children: [
+                    KitRow(
+                      icon: 'translate',
+                      iconBg: tone.icobg,
+                      iconColor: tone.ac,
+                      title: '转写模型',
+                      sub: app.subsModel.isEmpty
+                          ? '服务端还没报模型'
+                          : '${app.subsModel} · 在服务器本机跑',
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                      child: Row(
+                        children: [
+                          UIIcon('list', size: 19, color: tone.ink2),
+                          const SizedBox(width: 10),
+                          Text('转写语言',
+                              style: TextStyle(
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: tone.ink)),
+                          const Spacer(),
+                          _Seg(
+                            options: _langLabels,
+                            index: _langCodes.indexOf(app.session.subsLang)
+                                .clamp(0, _langCodes.length - 1),
+                            onPick: (i) {
+                              setState(() => app.session.subsLang = _langCodes[i]);
+                              app.session.save();
+                              app.toast('转写语言：${_langLabels[i]}');
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    KitRow(
+                      icon: 'speed',
+                      iconBg: tone.icobg,
+                      iconColor: tone.ac,
+                      title: '同时转写',
+                      sub: '现在 ${app.subsMaxActive} 个一起转',
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final n in const [1, 2, 3])
+                            GestureDetector(
+                              onTap: () async {
+                                if (app.subsMaxActive == n) return;
+                                try {
+                                  await app.api.subsSetMaxActive(n);
+                                  if (!mounted) return;
+                                  setState(() => app.subsMaxActive = n);
+                                  app.toast('同时转写 $n 个');
+                                } catch (e) {
+                                  app.toast('设置失败：$e');
+                                }
+                              },
+                              child: Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: app.subsMaxActive == n
+                                      ? tone.ac
+                                      : tone.surface2,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text('$n',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: app.subsMaxActive == n
+                                          ? Colors.white
+                                          : tone.ink2,
+                                    )),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    KitRow(
+                      icon: 'translate',
+                      iconBg: const Color(0xFFEFEAFF),
+                      iconColor: const Color(0xFF7C5CF0),
+                      title: '字幕翻译',
+                      sub: app.subsTranslate['ready'] == true
+                          ? '已配置 · 译成 ${(app.subsTranslate['to'] as String? ?? '').isEmpty ? '目标语言' : app.subsTranslate['to']}'
+                          : '未配置 · 只能出原文',
+                    ),
+                    KitRow(
+                      icon: 'list',
+                      iconBg: tone.icobg,
+                      iconColor: tone.ac,
+                      title: '听译队列',
+                      sub: app.subsJobs.isEmpty
+                          ? '还没有作业'
+                          : '${app.subsJobs.length} 个作业 · ${app.subsActive} 个在跑',
+                      trailing: UIIcon('chevron-right',
+                          size: 17, color: tone.ink3.withValues(alpha: 0.55)),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => SubsPage(app: app)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SectionHead('更多'),
               GroupCard(
                 children: [

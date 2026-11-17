@@ -33,6 +33,52 @@ export interface Storage {
   root: string
 }
 
+/* ---------- 听译（本机 faster-whisper 转写 + OpenAI 兼容翻译） ---------- */
+
+/** 一句字幕：[起, 止, 原文, 译文?]。译文可能要等翻译跑完才有。 */
+export type SubSeg = [number, number, string, string?]
+
+export type SubJobState = 'queued' | 'asr' | 'translating' | 'done' | 'error' | 'cancelled'
+
+export interface SubJob {
+  id: string
+  name: string
+  source: string
+  path: string
+  state: SubJobState
+  pct: number
+  msg: string
+  lang: string
+  dur: number
+  /** 已有句数 */
+  segments: number
+  /** 还没翻的句数 */
+  pending: number
+  model: string
+  created: number
+  error: string
+}
+
+export interface SubState {
+  enabled: boolean
+  model: string
+  device: string
+  compute_type: string
+  language: string
+  max_active: number
+  deps: { faster_whisper: boolean; av: boolean }
+  translate: { ready: boolean; to: string; model: string; base: string }
+}
+
+/** /subs/for：播放器按 来源+路径 找现成字幕 */
+export interface SubFor extends Partial<SubState> {
+  found: boolean
+  id?: string
+  lang?: string
+  dur?: number
+  segments?: SubSeg[]
+}
+
 /** 文件源：local（服务器磁盘）/ dufs（电脑上的 dufs）/ webdav（CloudDrive2 等） */
 export interface SourceInfo {
   id: string
@@ -42,6 +88,15 @@ export interface SourceInfo {
   writable: boolean
   root: string
   local?: boolean
+}
+
+/** /meta/sources：文件源列表 + 各功能开关 */
+export interface MetaSources {
+  sources: SourceInfo[]
+  default: string
+  chat?: { enabled: boolean }
+  /** 听译开关（服务端 config.json 的 subs.enabled）。老服务端没有这一项 */
+  subs?: { enabled: boolean; model?: string }
 }
 
 export class ApiError extends Error {
@@ -196,7 +251,7 @@ export class Api {
 
   private _sourcesCache: {
     at: number
-    p: Promise<{ sources: SourceInfo[]; default: string; chat?: { enabled: boolean } }>
+    p: Promise<MetaSources>
   } | null = null
 
   /// 首屏 App.vue 和各页面都要这份数据：缓存 30 秒 + 并发去重，
@@ -206,10 +261,7 @@ export class Api {
     if (!opts.fresh && this._sourcesCache && now - this._sourcesCache.at < 30000) {
       return this._sourcesCache.p
     }
-    const p = this.send<{ sources: SourceInfo[]; default: string; chat?: { enabled: boolean } }>(
-      'GET',
-      '/meta/sources',
-    ).catch((e) => {
+    const p = this.send<MetaSources>('GET', '/meta/sources').catch((e) => {
       this._sourcesCache = null // 失败不缓存，下次重试
       throw e
     })
@@ -278,6 +330,58 @@ export class Api {
 
   reindex() {
     return this.send('POST', '/search/reindex')
+  }
+
+  /* ---------- 听译 ---------- */
+
+  /** 队列快照 + 服务端配置（模型/设备/并发/翻译是否配好） */
+  subsList() {
+    return this.send<{ jobs: SubJob[] } & SubState>('GET', '/subs')
+  }
+
+  /** 提交一条视频转写。同一条视频重复提交是复用，跑着时返回当前状态 */
+  subsAdd(source: string, path: string, name = '', lang = '') {
+    return this.send<SubJob>('POST', '/subs/add', { source, path, name, lang })
+  }
+
+  subsCancel(id: string) {
+    return this.send<{ ok: boolean }>('POST', '/subs/cancel', { id })
+  }
+
+  subsDelete(id: string) {
+    return this.send<{ ok: boolean; deleted: string }>('POST', '/subs/delete', { id })
+  }
+
+  /** 整片翻译（后台线程跑，接口立刻返回；409 = 还没转写完或没配翻译） */
+  subsTranslate(id: string, to = '') {
+    return this.send<SubJob>('POST', '/subs/translate', { id, to })
+  }
+
+  subsSetMaxActive(n: number) {
+    return this.send<{ ok: boolean; max_active: number }>('POST', '/subs/config', { max_active: n })
+  }
+
+  /** 播放器用：这条视频有没有现成字幕 */
+  subsFor(source: string, path: string) {
+    return this.send<SubFor>('GET', '/subs/for', undefined, { source, path })
+  }
+
+  /** since>0 时只回新增的段落（服务端按序号切片），用于边转边显示 */
+  subsDetail(id: string, since = 0) {
+    return this.send<SubJob & { since: number; segments_list: SubSeg[] }>(
+      'GET',
+      `/subs/${encodeURIComponent(id)}`,
+      undefined,
+      { since: String(Math.max(0, since)) },
+    )
+  }
+
+  /// SRT 导出：<a download> 带不了 Authorization 头，只能把令牌放查询串
+  /// （服务端 current_device 认 ?t=，和缩略图同一条路）。
+  subsSrtUrl(id: string, trans = true) {
+    const q = new URLSearchParams({ trans: trans ? '1' : '0' })
+    if (this.token) q.set('t', this.token)
+    return `${this.origin}/api/v1/subs/${encodeURIComponent(id)}/srt?${q.toString()}`
   }
 }
 

@@ -8,8 +8,10 @@ import SettingsView from './views/SettingsView.vue'
 import HomeView from './views/HomeView.vue'
 import FilesView from './views/FilesView.vue'
 import SearchView from './views/SearchView.vue'
+import SubsView from './views/SubsView.vue'
 
-type Tab = 'home' | 'files' | 'chat' | 'me' | 'search' | 'more'
+/* 'subs' 是听译队列：不进主导航，只从「设置 → 听·译」和文件页 ⋯ →「查看字幕作业」跳进来 */
+type Tab = 'home' | 'files' | 'chat' | 'me' | 'search' | 'more' | 'subs'
 const tab = ref<Tab>('home')
 const authed = ref(false)
 const booting = ref(true)
@@ -260,11 +262,13 @@ onUnmounted(() => window.removeEventListener('yunxia:pwd', onNeedPwd))
         :play="playTarget"
         @played="playTarget = ''"
         @search="tab = 'search'"
+        @subs="tab = 'subs'"
       />
       <SearchView
         v-else-if="tab === 'search'"
         @open="(p: string) => go('files', p.replace(/\/[^/]+$/, '') || '/')"
       />
+      <SubsView v-else-if="tab === 'subs'" :toast="showToast" @back="tab = 'me'" />
       <ChatView v-else-if="tab === 'chat'" />
 
       <MoreView v-else-if="tab === 'more'" :toast="showToast" :close="() => (tab = 'me')" />
@@ -333,7 +337,7 @@ onUnmounted(() => window.removeEventListener('yunxia:pwd', onNeedPwd))
   align-items: center;
   justify-content: center;
   padding: 22px;
-  z-index: 40;
+  z-index: 900;          /* 必须高于播放器（100），否则播放器里点写操作看不见口令框 */
   animation: fade 0.16s ease;
 }
 
@@ -420,7 +424,7 @@ onUnmounted(() => window.removeEventListener('yunxia:pwd', onNeedPwd))
   font-weight: 500;
   padding: 9px 16px;
   border-radius: 999px;
-  z-index: 50;
+  z-index: 950;
   max-width: 80vw;
   text-align: center;
   animation: toastIn 0.18s ease;

@@ -2,13 +2,13 @@
 import Ico from '../components/Ico.vue'
 import { icoName } from '../ic'
 import { computed, ref, watch } from 'vue'
-import { api, ApiError, humanSize, type Entry } from '../api'
+import { api, ApiError, humanSize, type Entry, type SubJob } from '../api'
 import { ask, confirmBox } from '../ask'
 import Preview from './Preview.vue'
 import ImageViewer from './ImageViewer.vue'
 
 const props = defineProps<{ path: string; toast: (t: string) => void; play?: string }>()
-const emit = defineEmits<{ 'update:path': [string]; played: []; search: [] }>()
+const emit = defineEmits<{ 'update:path': [string]; played: []; search: []; subs: [] }>()
 
 const entries = ref<Entry[]>([])
 const loading = ref(false)
@@ -158,9 +158,59 @@ async function loadSources() {
     const r = await api.sources()
     srcList.value = r.sources
     if (!r.sources.some((s) => s.id === source.value)) source.value = r.default
+    // 听译没开就不出现「生成字幕」（老服务端也没有这个字段）
+    subsOn.value = !!r.subs?.enabled
+    if (subsOn.value) loadSubs()
   } catch {
     srcList.value = [{ id: '', name: '文件源', writable: false, kind: 'local' }]
   }
+}
+
+/* ---------- 听译：行内 ⋯ 里的「生成字幕 / 查看字幕作业」 ---------- */
+const subsOn = ref(false)
+const subJobs = ref<Record<string, SubJob>>({})
+const subKey = (src: string, p: string) => `${src}\u0000${p}`
+
+function jobOf(e: Entry | null): SubJob | null {
+  if (!e) return null
+  return subJobs.value[subKey(source.value, e.path)] || null
+}
+
+/** 只取一遍队列：菜单打开时刷新，不轮询（进度在听译页看） */
+async function loadSubs() {
+  if (!subsOn.value) return
+  try {
+    const r = await api.subsList()
+    const m: Record<string, SubJob> = {}
+    for (const j of r.jobs || []) m[subKey(j.source || source.value, j.path)] = j
+    subJobs.value = m
+  } catch {
+    /* 服务端没开听译 / 没装 faster-whisper：菜单里就不出这一项 */
+  }
+}
+
+function openMenu(e: Entry) {
+  menuFor.value = e
+  if (e.kind === 'video' && subsOn.value) loadSubs()
+}
+
+async function genSubs(e: Entry) {
+  menuFor.value = null
+  try {
+    const j = await api.subsAdd(source.value, e.path, e.name)
+    subJobs.value = { ...subJobs.value, [subKey(j.source || source.value, j.path)]: j }
+    if (j.state === 'done' && j.segments) props.toast(`${e.name} 已有字幕 · ${j.segments} 句`)
+    else if (j.state === 'done') props.toast('这条转完了但没有段落')
+    else props.toast(`已加入听译队列：${e.name}`)
+  } catch (err) {
+    const msg = err instanceof ApiError ? err.message : String(err)
+    props.toast(`听译提交失败：${msg}`)
+  }
+}
+
+function openSubsPage() {
+  menuFor.value = null
+  emit('subs')
 }
 
 loadSources()
@@ -563,7 +613,7 @@ function toggleSort(key: string) {
         <span v-if="selecting" class="check" :class="{ on: picked.has(e.path) }">
           <Ico v-if="picked.has(e.path)" name="check" :size="13" />
         </span>
-        <button v-if="!selecting" class="dots" title="更多操作" @click.stop="menuFor = e">
+        <button v-if="!selecting" class="dots" title="更多操作" @click.stop="openMenu(e)">
           <Ico name="more" :size="18" />
         </button>
       </div>
@@ -613,6 +663,14 @@ function toggleSort(key: string) {
           {{ menuFor.is_dir ? '打开' : '打开 / 预览' }}
         </button>
         <button v-if="!menuFor.is_dir" class="sheet-row" @click="download(menuFor); menuFor = null"><Ico name="download" :size="18" /> 下载到本机</button>
+        <button
+          v-if="subsOn && menuFor.kind === 'video'"
+          class="sheet-row"
+          @click="jobOf(menuFor) ? openSubsPage() : genSubs(menuFor)"
+        >
+          <Ico name="translate" :size="18" />
+          {{ jobOf(menuFor) ? '查看字幕作业' : '生成字幕' }}
+        </button>
         <button v-if="menuFor.is_dir" class="sheet-row" @click="addFav(menuFor); menuFor = null"><Ico name="star" :size="18" /> 收藏到首页</button>
         <button v-if="writable" class="sheet-row" @click="rename(menuFor); menuFor = null"><Ico name="edit" :size="18" /> 改名</button>
         <button v-if="writable" class="sheet-row" @click="openMove(menuFor)"><Ico name="move" :size="18" /> 移动到…</button>

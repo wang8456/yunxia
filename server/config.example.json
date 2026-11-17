@@ -51,5 +51,17 @@
     "system": "你是一个简洁、直接的中文助手。",
     "max_turns": 12,
     "timeout": 120
+  },
+  "subs": {
+    "enabled": false,
+    "model": "base",
+    "device": "auto",
+    "compute_type": "int8",
+    "language": "auto",
+    "beam_size": 1,
+    "vad": true,
+    "max_active": 1,
+    "model_dir": "./data/models",
+    "translate": {}
   }
 }

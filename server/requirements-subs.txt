@@ -1,0 +1,7 @@
+# 听译（可选）：本机 faster-whisper 转写
+# 安装：pip install -r requirements-subs.txt
+# 约 250–350MB（含 ctranslate2 / av / tokenizers / onnxruntime）
+faster-whisper>=1.0,<2
+# av 16 起去掉了 faster-whisper 依赖的 metadata_errors 参数，会抛
+# TypeError: open() got an unexpected keyword argument 'metadata_errors'
+av>=12,<16

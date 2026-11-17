@@ -41,6 +41,83 @@ class App extends ChangeNotifier {
   /// 服务端 /meta/sources 的 chat.enabled：关掉时「对话」入口一律不出现
   bool chatEnabled = false;
 
+  // ---------- 听译（服务端本机转写 + 翻译） ----------
+
+  /// 服务端 /meta/sources 的 subs.enabled：关掉时设置页、文件页、播放器
+  /// 都不出现听译入口 —— 界面上不摆按不动的按钮。
+  bool subsEnabled = false;
+
+  /// 队列缓存（GET /subs 的 jobs 原样存着）：文件页判「有没有任务」、
+  /// 队列页画卡片都读这一份，别各自发请求各说一套。
+  List<Map<String, dynamic>> subsJobs = const [];
+
+  /// 转写模型（只读展示）、同时转写几个、依赖与翻译配置
+  String subsModel = '';
+  int subsMaxActive = 2;
+  Map<String, dynamic> subsDeps = const {};
+  Map<String, dynamic> subsTranslate = const {};
+
+  /// 拉过一次队列没有（文件页第一次打开操作面板时补一次）
+  bool subsLoaded = false;
+
+  /// 队列里正在跑的（排队 / 转写 / 翻译）任务数
+  int get subsActive => subsJobs
+      .where((j) => const {'queued', 'asr', 'translating'}.contains(j['state']))
+      .length;
+
+  /// 这个文件在队列里的任务（null = 还没生成过字幕）
+  Map<String, dynamic>? subsJobFor(String src, String p) {
+    for (final j in subsJobs) {
+      if (j['source'] == src && j['path'] == p) return j;
+    }
+    return null;
+  }
+
+  /// 一次拉全队列。拿不到就返回 false（队列页自己给提示，别在这里弹 toast，
+  /// 播放器每 2 秒轮询时不至于刷屏）。
+  Future<bool> refreshSubs() async {
+    try {
+      final r = await api.subsList();
+      subsJobs = ((r['jobs'] as List?) ?? const [])
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+      subsEnabled = r['enabled'] as bool? ?? subsEnabled;
+      subsModel = r['model'] as String? ?? subsModel;
+      subsMaxActive = (r['max_active'] as num?)?.toInt() ?? subsMaxActive;
+      subsDeps = ((r['deps'] as Map?) ?? const {}).cast<String, dynamic>();
+      subsTranslate = ((r['translate'] as Map?) ?? const {}).cast<String, dynamic>();
+      subsLoaded = true;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      subsLoaded = true;
+      return false;
+    }
+  }
+
+  /// 给这个文件排一个听译任务
+  Future<bool> addSubs(Entry e) async {
+    if (!canWrite) {
+      toast('先去「设置 → 写入口令」填一次');
+      return false;
+    }
+    try {
+      await api.subsAdd(
+        source,
+        e.path,
+        name: e.name,
+        lang: session.subsLang,
+      );
+      toast('已加入听译队列');
+      await refreshSubs();
+      return true;
+    } catch (err) {
+      toast('排不上听译：$err');
+      return false;
+    }
+  }
+
+
   /// 当前源能不能写：115 中转与 webdav 只有读接口
   bool get writable =>
       (sources.firstWhere(
@@ -322,6 +399,13 @@ class App extends ChangeNotifier {
           .toList();
       final chat = r['chat'];
       chatEnabled = chat is Map && chat['enabled'] == true;
+      // 听译：/meta/sources 的 subs:{enabled,model}。关掉就整块不出现。
+      final subs = r['subs'];
+      subsEnabled = subs is Map && subs['enabled'] == true;
+      if (subs is Map) {
+        final m = subs['model'];
+        if (m is String && m.isNotEmpty) subsModel = m;
+      }
       final def = r['default'] as String?;
       if (sources.isNotEmpty && !sources.any((s) => s['id'] == source)) {
         source = def ?? sources.first['id'] as String;
@@ -329,6 +413,7 @@ class App extends ChangeNotifier {
     } catch (_) {
       sources = const [];
       chatEnabled = false;
+      subsEnabled = false;
     }
     notifyListeners();
   }

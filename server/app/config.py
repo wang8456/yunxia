@@ -59,6 +59,44 @@ class ChatSettings:
 
 
 @dataclass
+class SubsSettings:
+    """听译：本机 faster-whisper 转写 + OpenAI 兼容翻译（默认关闭）。"""
+    enabled: bool = False
+    model: str = "base"              # tiny/base/small/medium/large-v3，或本地模型目录
+    device: str = "auto"             # auto / cpu / cuda
+    compute_type: str = "int8"       # int8 / int8_float16 / float16 / float32
+    language: str = "auto"           # auto / zh / ja / en ...
+    beam_size: int = 1
+    vad: bool = True
+    max_active: int = 1              # 同时转写几部
+    model_dir: str = "./data/models"
+    translate: dict = field(default_factory=dict)   # {base,api_key,model,to}
+
+    @property
+    def model_path(self) -> str:
+        p = Path(_abs(self.model_dir))
+        p.mkdir(parents=True, exist_ok=True)
+        return str(p)
+
+    def tr(self) -> dict:
+        """翻译配置：没单独配就用 chat 那份（一条 Key 两处用）。"""
+        out = {"base": self.translate.get("base") or "",
+               "api_key": self.translate.get("api_key") or "",
+               "model": self.translate.get("model") or "",
+               "to": self.translate.get("to") or "zh"}
+        ch = getattr(CFG, "chat", None)
+        if ch is not None:
+            out["base"] = out["base"] or ch.base
+            out["api_key"] = out["api_key"] or ch.api_key
+            out["model"] = out["model"] or ch.model
+        return out
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.enabled)
+
+
+@dataclass
 class Config:
     host: str = "0.0.0.0"
     port: int = 8686
@@ -69,6 +107,7 @@ class Config:
     token_days: int = 30
     sources: list[Source] = field(default_factory=list)
     chat: ChatSettings = field(default_factory=ChatSettings)
+    subs: SubsSettings = field(default_factory=SubsSettings)
 
     # ---- 派生路径 ----
     @property
@@ -95,6 +134,13 @@ class Config:
     def media_dir(self) -> Path:
         """对话附件落盘目录。"""
         p = self.data_path / "media"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def subs_dir(self) -> Path:
+        """听译任务与段落落盘目录。"""
+        p = self.data_path / "subs"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -146,6 +192,7 @@ def _build(raw: dict) -> Config:
         token_days=int(raw.get("token_days", 30)),
         sources=[Source(**s) for s in (raw.get("sources") or [])],
         chat=ChatSettings(**(raw.get("chat") or {})),
+        subs=SubsSettings(**(raw.get("subs") or {})),
     )
     if not cfg.sources:
         # 没有任何来源时给一个能直接用的：./data/files

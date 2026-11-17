@@ -55,6 +55,19 @@
 **上不了网但想用本地模型**
 `"base": "http://127.0.0.1:11434/v1"`，服务端和 Ollama 同机；Docker 部署时用 `host.docker.internal` 或 host 网络。
 
+## 听译
+
+| 现象 | 原因 / 办法 |
+|---|---|
+| 503「没装 faster-whisper」 | `pip install -r server/requirements-subs.txt` 后重启 |
+| 503「听译没开」 | `subs.enabled` 还是 false |
+| `TypeError … metadata_errors` | `av` 装太新，`pip install "av>=12,<16"` |
+| 卡在「加载模型…」很久 | 正在下模型；设 `HF_ENDPOINT=https://hf-mirror.com` 或提前下载 |
+| 转完 0 段 | 无人声的片子会这样，属正常 |
+| 译文整段空 | 翻译服务拒翻 / 行数不对时会**留空**（不拿原文冒充），换模型再试 |
+
+细节与模型、内存对照见 [transcribe.md](transcribe.md)。
+
 ## 客户端
 
 **App 里填了地址还是「连不上」**

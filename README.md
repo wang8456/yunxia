@@ -20,6 +20,7 @@
 - **缩略图**：Pillow 缩放 + 落盘缓存，手机上不再拉原图
 - **继续观看**：多端共享播放进度，片头 10 秒/片尾 30 秒自动不留记录
 - **对话（默认关闭）**：接任意 OpenAI 兼容服务（DeepSeek / OpenAI / 本地 Ollama …），自己在配置里填地址、模型和 Key 就能用
+- **听译（默认关闭）**：服务端本机跑 faster-whisper 把视频转成字幕，再用 OpenAI 兼容服务翻成中文 → 播放器里双语字幕、边转边显示、可导出 SRT
 - **两个客户端**：`web/`（Vue 3 + Vite）、`app/`（Flutter，Android）
 
 ## 目录结构
@@ -60,6 +61,7 @@ docker compose up -d
 | 把电脑的文件夹共享出去（dufs，含 Windows 开机自启） | [docs/storage-dufs.md](docs/storage-dufs.md) |
 | 接 CloudDrive2 / 115 网盘 / Alist（WebDAV） | [docs/storage-webdav.md](docs/storage-webdav.md) |
 | 打开对话，接 DeepSeek 或本地模型 | [docs/chat.md](docs/chat.md) |
+| 打开听译（本机转写 + 双语字幕），含模型与内存需求 | [docs/transcribe.md](docs/transcribe.md) |
 | 编译网页端 / 打 Android APK | [docs/build-clients.md](docs/build-clients.md) |
 | 报错自查、常见坑 | [docs/faq.md](docs/faq.md) |
 
@@ -81,7 +83,9 @@ docker compose up -d
       "user": "you@mail.com", "password": "p", "root": "/" }
   ],
   "chat": { "enabled": false, "base": "https://api.deepseek.com/v1",
-            "api_key": "", "model": "deepseek-chat" }
+            "api_key": "", "model": "deepseek-chat" },
+  "subs": { "enabled": false, "model": "base", "compute_type": "int8",
+            "max_active": 1, "translate": {} }   // 听译，见 docs/transcribe.md
 }
 ```
 

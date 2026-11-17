@@ -14,6 +14,7 @@ import '../core/langs.dart';
 import '../core/models.dart';
 import '../core/tokens.dart';
 import '../core/ui_icons.dart';
+import 'player_subs_layer.dart';
 
 part 'player_widgets.dart';
 
@@ -76,6 +77,30 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _closing = false;
 
   late Entry _entry;
+
+  // ---------------------------------------------------------------- 听译字幕
+  // 播放页自己管这一部片的字幕状态（不塞进 App 全局）：换集就整个换掉，
+  // 退出页面定时器跟着 dispose。
+
+  int _subMode = kSubOff; // 关 / 原文 / 双语
+  int _subSize = kSubMid; // 小 / 中 / 大
+  String? _subJobId;
+  String _subState = ''; // '' 没有任务 / queued / asr / translating / done / error / cancelled
+  double _subPct = 0;
+  String _subErr = '';
+  List<SubLine> _subLines = const [];
+  int _subSince = 0; // 增量拉取的游标（已经拿到几句）
+  Timer? _subTimer;
+  bool _subBusy = false; // 正在排任务，防连点
+  bool _subPicked = false; // 用户手动选过显示方式：别被自动切换覆盖
+
+  /// 字幕状态是轮询推进的，面板开着时要跟着重画
+  final _subRev = ValueNotifier<int>(0);
+
+  void _subBump() => _subRev.value = _subRev.value + 1;
+
+  bool get _subRunning =>
+      _subState == 'queued' || _subState == 'asr' || _subState == 'translating';
 
   @override
   void initState() {
@@ -253,6 +278,171 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           if (mounted && gen == _gen) setState(() => _error = '$e');
         });
     _probeDolby(); // 真实码流说了算，检测完再决定能不能开杜比
+    unawaited(_loadSubs()); // 有现成字幕就自动挂上，没有就等面板里一键生成
+  }
+
+  // ---------------------------------------------------------------- 听译实现
+
+  /// 换片/首次打开：先清空上一集的字幕，再问服务端这一集有没有
+  Future<void> _loadSubs() async {
+    _subStopPoll();
+    _subJobId = null;
+    _subState = '';
+    _subPct = 0;
+    _subErr = '';
+    _subLines = const [];
+    _subSince = 0;
+    if (!_subPicked) _subMode = kSubOff;
+    _subBump();
+    if (!widget.app.subsEnabled) return;
+    final want = _entry.path;
+    try {
+      final r = await widget.app.api.subsFor(widget.app.source, want);
+      // 期间可能又换了集：旧结果别往新片上挂
+      if (!mounted || _entry.path != want) return;
+      if (r['found'] != true) return;
+      final id = r['id'] as String?;
+      if (id == null || id.isEmpty) return;
+      final segs = parseSubLines(r['segments']);
+      setState(() {
+        _subJobId = id;
+        _subLines = segs;
+        _subSince = segs.length;
+        // 有译文就双语，只有原文就单语 —— 用户自己选过的不动
+        if (!_subPicked && segs.isNotEmpty) {
+          _subMode = segs.any((l) => l.hasTrans) ? kSubBoth : kSubSrc;
+        }
+      });
+      _subBump();
+      await _subFetch(); // 顺手问一次状态：还没转完就把轮询开起来
+    } catch (_) {
+      // 服务端没开听译 / 网络抖一下：不影响播放，面板里会显示「还没生成」
+    }
+  }
+
+  /// 拉一次增量（since=已经拿到的句数），转着就继续轮询
+  Future<void> _subFetch() async {
+    final id = _subJobId;
+    if (id == null) return;
+    try {
+      final r = await widget.app.api.subsDetail(id, since: _subSince);
+      if (!mounted || _subJobId != id) return;
+      final add = parseSubLines(r['segments_list']);
+      final st = r['state'] as String? ?? _subState;
+      final pct = (r['pct'] as num?)?.toDouble() ?? _subPct;
+      setState(() {
+        if (add.isNotEmpty) {
+          _subLines = [..._subLines, ...add];
+          _subSince = _subLines.length;
+          if (!_subPicked && _subMode == kSubOff) _subMode = kSubSrc;
+          // 翻译这一段出来了：自动从单语换成双语，用户不用自己去点
+          if (!_subPicked && add.any((l) => l.hasTrans)) _subMode = kSubBoth;
+        }
+        _subState = st;
+        _subPct = pct;
+        final e = r['error'];
+        _subErr = e is String ? e : '';
+      });
+      _subBump();
+      if (_subRunning) {
+        _subStartPoll();
+      } else {
+        _subStopPoll();
+      }
+    } catch (_) {
+      // 单次拿不到不算失败，下一次轮询再试（转写可能要跑十几分钟）
+    }
+  }
+
+  void _subStartPoll() {
+    if (_subTimer != null) return;
+    _subTimer = Timer.periodic(const Duration(seconds: 2), (_) => _subFetch());
+  }
+
+  void _subStopPoll() {
+    _subTimer?.cancel();
+    _subTimer = null;
+  }
+
+  /// 面板里点「生成听译」/「重新转写」
+  Future<void> _generateSubs() async {
+    if (_subBusy) return;
+    if (!widget.app.canWrite) {
+      widget.app.toast('先去「设置 → 写入口令」填一次，才能排听译');
+      return;
+    }
+    _subBusy = true;
+    _subBump();
+    try {
+      final r = await widget.app.api.subsAdd(
+        widget.app.source,
+        _entry.path,
+        name: _entry.name,
+        lang: widget.app.session.subsLang,
+      );
+      var id = r['id'] as String?;
+      if (id == null || id.isEmpty) {
+        // 有的实现在 body 里回 job、有的只回 ok：拿不稳就按路径回查一次
+        final f = await widget.app.api.subsFor(widget.app.source, _entry.path);
+        id = f['id'] as String?;
+      }
+      if (!mounted) return;
+      if (id == null || id.isEmpty) {
+        widget.app.toast('服务端没给任务号，去「听译队列」看看');
+        return;
+      }
+      setState(() {
+        _subJobId = id;
+        _subState = 'queued';
+        _subPct = 0;
+        _subErr = '';
+        _subLines = const [];
+        _subSince = 0;
+        if (!_subPicked) _subMode = kSubSrc;
+      });
+      _subBump();
+      widget.app.toast('开始听译，边转边显');
+      await _subFetch();
+      _subStartPoll();
+      unawaited(widget.app.refreshSubs());
+    } catch (e) {
+      if (mounted) widget.app.toast('排不上听译：$e');
+      _subBump();
+    } finally {
+      _subBusy = false;
+      _subBump();
+    }
+  }
+
+  Future<void> _cancelSubs() async {
+    final id = _subJobId;
+    if (id == null) return;
+    try {
+      await widget.app.api.subsCancel(id);
+      if (!mounted) return;
+      setState(() => _subState = 'cancelled');
+      _subStopPoll();
+      _subBump();
+      widget.app.toast('已取消转写');
+      unawaited(widget.app.refreshSubs());
+    } catch (e) {
+      widget.app.toast('取消失败：$e');
+    }
+  }
+
+  Future<void> _translateSubs() async {
+    final id = _subJobId;
+    if (id == null) return;
+    try {
+      await widget.app.api.subsTranslate(id);
+      if (!mounted) return;
+      setState(() => _subState = 'translating');
+      _subBump();
+      _subStartPoll();
+      widget.app.toast('开始翻译字幕');
+    } catch (e) {
+      widget.app.toast('翻译失败：$e');
+    }
   }
 
   void _tick() {
@@ -429,6 +619,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _savePos(force: true); // 退出时记一次，别丢最后几秒
     _hideTimer?.cancel();
+    _subStopPoll(); // 字幕轮询必须跟着页面一起停，否则退出后还在拉接口
+    _subRev.dispose();
     _vc.removeListener(_tick);
     _vc.dispose();
     super.dispose();
@@ -865,6 +1057,208 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       widget.app.toast('改的是窗口亮度；要改系统亮度去 设置→更多→系统亮度权限');
     }
   }
+
+  /// 字幕面板：开关 / 字号 / 状态 / 生成。样式跟「播放设置」同一个深色弹窗。
+  Future<void> _showSubsPanel() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF16181C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => ValueListenableBuilder<int>(
+        valueListenable: _subRev,
+        builder: (c, _, _) => _subsPanelBody(c),
+      ),
+    );
+  }
+
+  /// 面板里那行状态：未生成 / 转写中 42% / 已完成 · N 句
+  String _subStatusText() {
+    if (!widget.app.subsEnabled) return '服务端没开听译';
+    if (_subJobId == null) return '这部片还没生成字幕';
+    switch (_subState) {
+      case 'queued':
+        return '排队中 · 前面还有任务';
+      case 'asr':
+        return '转写中 ${(_subPct * 100).round()}%';
+      case 'translating':
+        return '翻译中 ${(_subPct * 100).round()}%';
+      case 'done':
+        return '已完成 · ${_subLines.length} 句';
+      case 'cancelled':
+        return '已取消';
+      case 'error':
+        return _subErr.isEmpty ? '转写失败' : '转写失败：$_subErr';
+      default:
+        return _subLines.isEmpty ? '已挂上 · 等段落' : '已挂上 · ${_subLines.length} 句';
+    }
+  }
+
+  Widget _subsPanelBody(BuildContext ctx) {
+    const dim = Color(0xFF9A9AA2);
+    final cfg = widget.app.subsTranslate;
+    final transReady = cfg['ready'] == true;
+    final transTo = (cfg['to'] as String? ?? '').trim();
+    final hasTrans = _subLines.any((l) => l.hasTrans);
+    final jobName = _subJobId == null ? '' : '任务 $_subJobId';
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '字幕',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _subStatusText(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _subState == 'error'
+                          ? const Color(0xFFE08A8A)
+                          : const Color(0xFF8E8E96),
+                      fontSize: 11.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.pop(ctx),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: UIIcon('close', size: 18, color: dim),
+                  ),
+                ),
+              ],
+            ),
+            if (_subRunning) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(
+                  value: _subPct.clamp(0.0, 1.0),
+                  minHeight: 4,
+                  backgroundColor: const Color(0x1FFFFFFF),
+                  valueColor: const AlwaysStoppedAnimation(Color(0xFF48A8FF)),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            _subLabel('显示'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < kSubModeLabels.length; i++)
+                  _PanelChip(
+                    label: kSubModeLabels[i],
+                    on: _subMode == i,
+                    onTap: () {
+                      setState(() {
+                        _subMode = i;
+                        _subPicked = true; // 用户自己定的，别再自动切
+                      });
+                      _subBump();
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _subLabel('字号'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < kSubSizeLabels.length; i++)
+                  _PanelChip(
+                    label: kSubSizeLabels[i],
+                    on: _subSize == i,
+                    onTap: () {
+                      setState(() => _subSize = i);
+                      _subBump();
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (!widget.app.subsEnabled)
+              const Text(
+                '服务端没开听译（/meta/sources 里 subs.enabled=false）',
+                style: TextStyle(color: dim, fontSize: 12, height: 1.5),
+              )
+            else
+              Row(
+                children: [
+                  if (_subRunning)
+                    _PanelBtn(
+                      label: _subBusy ? '处理中…' : '取消转写',
+                      icon: 'close',
+                      onTap: _subBusy ? null : _cancelSubs,
+                    )
+                  else ...[
+                    _PanelBtn(
+                      label: _subJobId == null ? '生成听译' : '重新转写',
+                      icon: 'translate',
+                      primary: true,
+                      onTap: _subBusy ? null : _generateSubs,
+                    ),
+                    // 转完但没译文、服务端也配了翻译：给一个「翻译」按钮
+                    if (_subJobId != null &&
+                        _subState == 'done' &&
+                        transReady &&
+                        !hasTrans) ...[
+                      const SizedBox(width: 10),
+                      _PanelBtn(
+                        label: '翻译${transTo.isEmpty ? '' : '成$transTo'}',
+                        icon: 'translate',
+                        onTap: _translateSubs,
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            const SizedBox(height: 12),
+            Text(
+              jobName.isEmpty
+                  ? '听译在服务器本机跑（faster-whisper），转出来的句子会边转边显示在这里。'
+                  : '$jobName · 转写和翻译都在服务端本机跑，关掉面板也会继续。',
+              style: const TextStyle(
+                color: Color(0xFF7C7C86),
+                fontSize: 11,
+                height: 1.6,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _subLabel(String t) => Text(
+    t,
+    style: const TextStyle(
+      color: Color(0xFF9A9AA2),
+      fontSize: 11.5,
+      fontWeight: FontWeight.w600,
+    ),
+  );
 
   Future<void> _showPlaylist() async {
     if (widget.playlist.isEmpty) {
@@ -1345,7 +1739,30 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   aspectRatio: _vc.value.aspectRatio == 0
                       ? 16 / 9
                       : _vc.value.aspectRatio,
-                  child: _vc.render(),
+                  // AspectRatio 在这一层已经是**画面本身**的大小，
+                  // 所以字幕层贴着它的底边就是贴着画面底边，
+                  // 竖屏看横片时不会飘到黑边上。
+                  child: LayoutBuilder(
+                    builder: (c, cons) {
+                      final h = cons.maxHeight.isFinite ? cons.maxHeight : 400.0;
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          _vc.render(),
+                          SubtitleLayer(
+                            lines: _subLines,
+                            position:
+                                _vc.value.position.inMilliseconds / 1000.0,
+                            mode: _subMode,
+                            size: _subSize,
+                            // 控件浮出来时上移，别被进度条和按钮压住
+                            bottom: _controls && !_locked ? 96 : 16,
+                            scale: (h / 420).clamp(0.78, 1.3).toDouble(),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
             // 手势反馈：拖进度 / 长按倍速 / 调音量
@@ -1744,26 +2161,49 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                                       iconSize: 22,
                                       onTap: () => _seekRelative(10),
                                     ),
-                                    const Spacer(),
-                                    // 入口用齿轮，倍速只是面板里的一项，
-                                    // 拿「1.0×」当按钮没人看得出这是设置
-                                    _VpBtn(
-                                      icon: 'setting',
-                                      iconSize: 21,
-                                      small: true,
-                                      onTap: _showRateMenu,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _VpBtn(
-                                      icon: 'playlist',
-                                      small: true,
-                                      onTap: _showPlaylist,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _VpBtn(
-                                      icon: 'rotate-screen',
-                                      small: true,
-                                      onTap: _toggleOrient,
+                                    // 工具条在窄屏（360dp）上会挤：右边这一簇交给
+                                    // FittedBox——放得下就原尺寸靠右，放不下才等比缩一点，
+                                    // 不会直接溢出报黄条。
+                                    Expanded(
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerRight,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // 字幕：开关/字号/生成都在面板里，
+                                            // 按钮本身只是入口，亮着表示当前有字幕
+                                            _VpBtn(
+                                              icon: 'translate',
+                                              iconSize: 21,
+                                              small: true,
+                                              active: _subMode != kSubOff,
+                                              onTap: _showSubsPanel,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // 入口用齿轮，倍速只是面板里的一项，
+                                            // 拿「1.0×」当按钮没人看得出这是设置
+                                            _VpBtn(
+                                              icon: 'setting',
+                                              iconSize: 21,
+                                              small: true,
+                                              onTap: _showRateMenu,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            _VpBtn(
+                                              icon: 'playlist',
+                                              small: true,
+                                              onTap: _showPlaylist,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            _VpBtn(
+                                              icon: 'rotate-screen',
+                                              small: true,
+                                              onTap: _toggleOrient,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
