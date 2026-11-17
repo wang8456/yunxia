@@ -1,0 +1,18 @@
+[Unit]
+Description=Yunxia (云匣) 私有云盘服务
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ↓ 改成你自己的路径与用户
+WorkingDirectory=/opt/yunxia/server
+User=nobody
+Group=nogroup
+Environment=YUNXIA_CONFIG=/opt/yunxia/server/config.json
+ExecStart=/opt/yunxia/server/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8686
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,45 @@
+# 服务端运行数据（数据库、令牌密钥、缩略图、对话附件、上传中转）
+server/data/
+data/
+
+# 真实配置（含口令与各来源账号密码），只提交 example
+server/config.json
+deploy/config.json
+deploy/data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node / 前端
+node_modules/
+web/dist/
+web/.vite/
+*.log
+
+# Flutter / Android 构建产物
+app/build/
+app/.dart_tool/
+app/.flutter-plugins*
+app/android/.gradle/
+app/android/local.properties
+app/android/app/build/
+*.apk
+*.aab
+
+# 签名与证书：绝不进仓库
+key.properties
+*.jks
+*.keystore
+*.p12
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.swp
+Thumbs.db

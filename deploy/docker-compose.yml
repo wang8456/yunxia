@@ -1,0 +1,18 @@
+# 在 deploy/ 目录里：cp ../server/config.example.json config.json && nano config.json
+# 然后 docker compose up -d --build
+services:
+  yunxia:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: yunxia
+    restart: unless-stopped
+    ports:
+      - "8686:8686"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/app/data
+      # 要用「本机磁盘」来源时，把宿主机目录挂进来（config.json 里 root 写容器内路径）
+      # - /volume1/media:/srv/media:ro
+    environment:
+      - TZ=Asia/Shanghai

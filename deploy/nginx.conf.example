@@ -1,0 +1,29 @@
+# 云匣前面的 Nginx 示例（不想用服务端自带的静态托管时）
+# 关键三点：Range 要透传、SSE 不能缓冲、上传体积不要限制
+server {
+    listen 80;
+    server_name yunxia.lan;
+
+    # 上传大文件别卡默认的 1MB
+    client_max_body_size 0;
+
+    # 网页端（npm run build 出来的 web/dist）
+    root /opt/yunxia/web/dist;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API 与对话
+    location ~ ^/(api|hermes)/ {
+        proxy_pass http://127.0.0.1:8686;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Range $http_range;          # 播放器拖进度条靠它
+        proxy_set_header If-Range $http_if_range;
+        proxy_buffering off;                          # 对话是 SSE，缓冲会卡住
+        proxy_read_timeout 3600s;
+    }
+}

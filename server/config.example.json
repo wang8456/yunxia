@@ -1,0 +1,55 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8686,
+    "public_base": ""
+  },
+  "auth": {
+    "password": "change-me"
+  },
+  "paths": {
+    "data": "./data"
+  },
+  "token_days": 30,
+  "sources": [
+    {
+      "id": "local",
+      "name": "本机储存",
+      "subtitle": "服务器本机磁盘",
+      "kind": "local",
+      "root": "./data/files",
+      "enabled": true
+    },
+    {
+      "id": "pc",
+      "name": "电脑 · dufs",
+      "subtitle": "局域网里的电脑共享目录（需要 dufs）",
+      "kind": "dufs",
+      "base": "http://192.168.1.10:5000",
+      "user": "",
+      "password": "",
+      "root": "/",
+      "enabled": false
+    },
+    {
+      "id": "cd2",
+      "name": "CloudDrive2 · WebDAV",
+      "subtitle": "经 CloudDrive2 的 WebDAV 挂载（115 等网盘）",
+      "kind": "webdav",
+      "base": "http://192.168.1.10:19798/dav",
+      "user": "",
+      "password": "",
+      "root": "/",
+      "enabled": false
+    }
+  ],
+  "chat": {
+    "enabled": false,
+    "base": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-chat",
+    "system": "你是一个简洁、直接的中文助手。",
+    "max_turns": 12,
+    "timeout": 120
+  }
+}
