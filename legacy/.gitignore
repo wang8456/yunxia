@@ -1,0 +1,22 @@
+# 原版存档：运行期与构建产物一律不入库
+build/
+.dart_tool/
+.flutter-plugins*
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+data/
+jobs/
+audio/
+bin/
+models/
+*.log
+test/failures/
+# 签名与私有配置
+key.properties
+local.properties
+*.jks
+*.keystore
+hub-config.json

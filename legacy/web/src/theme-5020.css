@@ -1,0 +1,238 @@
+/* ============================================================
+   主题令牌 —— 逐字照搬 5020 旧前端 assets/theme.css
+   五套：蓝色（默认，不带 data-theme）/ 浅色 / 深色 / 绿色 / 护眼(sepia)
+   组件层只认 --t-*；下面 :root 把老代码里的 --bg/--surface 等做别名，
+   这样新前端不用改一处组件就能吃到同一套色。
+   ============================================================ */
+
+/* 蓝色 = 默认（旧前端不设 data-theme 就是这套） */
+html,
+html[data-theme],
+html[data-theme="blue"] {
+  --t-bg: #f4f7fc;
+  --t-bg2: #f7f9fd;
+  --t-surface: #ffffff;
+  --t-surface2: #f7fafe;
+  --t-line: #e9eef5;
+  --t-line2: #f2f5f9;
+  --t-ink: #26364a;
+  --t-ink2: #5d7391;
+  --t-ink3: #9aa8ba;
+  --t-ac: #1677f8;
+  --t-ac2: #0868e9;
+  --t-acw: #e7f1ff;
+  --t-onac: #ffffff;
+  --t-nav: rgba(255, 255, 255, 0.93);
+  --t-ov: rgba(21, 38, 62, 0.33);
+  --t-sh: rgba(53, 99, 156, 0.06);
+  --t-icobg: #eef4ff;
+
+  /* 文件类型配色 —— 旧前端按主题给的八种色相 */
+  --k-folder-bg: #e8f2ff;
+  --k-folder: #1677f8;
+  --k-img-bg: #e5f8ef;
+  --k-img: #0e9d78;
+  --k-vid-bg: #efeaff;
+  --k-vid: #7c5cf0;
+  --k-aud-bg: #f0eaff;
+  --k-aud: #8859dc;
+  --k-zip-bg: #fff3df;
+  --k-zip: #b3720f;
+  --k-code-bg: #e6f6fb;
+  --k-code: #0e8ea3;
+  --k-pdf-bg: #fff0ee;
+  --k-pdf: #e45e53;
+  --k-doc-bg: #f0f2f5;
+  --k-doc: #4a6b9c;
+}
+
+html[data-theme="light"] {
+  --t-bg: #f2f3f5;
+  --t-bg2: #ffffff;
+  --t-surface: #ffffff;
+  --t-surface2: #f7f8fa;
+  --t-line: #e5e7eb;
+  --t-line2: #f0f1f3;
+  --t-ink: #2a2a2e;
+  --t-ink2: #5c5c63;
+  --t-ink3: #9a9aa4;
+  --t-ac: #3a3a3c;
+  --t-ac2: #1d1d1f;
+  --t-acw: #ececee;
+  --t-onac: #ffffff;
+  --t-nav: rgba(255, 255, 255, 0.93);
+  --t-ov: rgba(0, 0, 0, 0.34);
+  --t-sh: rgba(0, 0, 0, 0.05);
+  --t-icobg: #f0f1f3;
+
+  --k-folder-bg: #eef0f3;
+  --k-folder: #3a3a3c;
+  --k-img-bg: #e9f4ee;
+  --k-img: #2e7d5b;
+  --k-vid-bg: #efeaf8;
+  --k-vid: #6b4fc0;
+  --k-aud-bg: #f1ecf8;
+  --k-aud: #7a58b8;
+  --k-zip-bg: #f9f0e1;
+  --k-zip: #9c6b17;
+  --k-code-bg: #e7f2f4;
+  --k-code: #2b7c88;
+  --k-pdf-bg: #fbeceb;
+  --k-pdf: #bf4a41;
+  --k-doc-bg: #edf1f7;
+  --k-doc: #37699f;
+}
+
+html[data-theme="dark"] {
+  --t-bg: #121417;
+  --t-bg2: #0e1013;
+  --t-surface: #1a1d21;
+  --t-surface2: #22262b;
+  --t-line: #2b3037;
+  --t-line2: #23272c;
+  --t-ink: #e2e5e9;
+  --t-ink2: #9ba5b1;
+  --t-ink3: #6f7782;
+  --t-ac: #4c9aff;
+  --t-ac2: #3b82f6;
+  --t-acw: #1b2735;
+  --t-onac: #ffffff;
+  --t-nav: rgba(18, 20, 23, 0.93);
+  --t-ov: rgba(0, 0, 0, 0.62);
+  --t-sh: rgba(0, 0, 0, 0.45);
+  --t-icobg: #262c34;
+
+  --k-folder-bg: #182b41;
+  --k-folder: #63a9ff;
+  --k-img-bg: #14322a;
+  --k-img: #43d09b;
+  --k-vid-bg: #251f3e;
+  --k-vid: #a78bfa;
+  --k-aud-bg: #2a2142;
+  --k-aud: #bd9af7;
+  --k-zip-bg: #32261a;
+  --k-zip: #dfa845;
+  --k-code-bg: #122e34;
+  --k-code: #4ec8d8;
+  --k-pdf-bg: #33201f;
+  --k-pdf: #f4796c;
+  --k-doc-bg: #232a33;
+  --k-doc: #9fb3cc;
+}
+
+html[data-theme="green"] {
+  --t-bg: #f6f8f7;
+  --t-bg2: #ffffff;
+  --t-surface: #ffffff;
+  --t-surface2: #f2f6f4;
+  --t-line: #e5ebe8;
+  --t-line2: #eff4f1;
+  --t-ink: #1c2420;
+  --t-ink2: #5a6a62;
+  --t-ink3: #95a49c;
+  --t-sub: #5a6a62;
+  --t-ac: #0fa452;
+  --t-ac2: #0b8a45;
+  --t-acw: #e6f9ef;
+  --t-ontint: #0b8a45;
+  --t-onac: #ffffff;
+  --t-nav: rgba(255, 255, 255, 0.94);
+  --t-ov: rgba(10, 40, 25, 0.33);
+  --t-sh: rgba(10, 80, 45, 0.06);
+  --t-icobg: #eaf7f0;
+  --t-sel: #e6f9ef;
+  --t-fill: #e6f9ef;
+
+  --k-folder-bg: #e6f9ef;
+  --k-folder: #0b8a45;
+  --k-img-bg: #e4f5f2;
+  --k-img: #0d8272;
+  --k-vid-bg: #efe9fb;
+  --k-vid: #6d4fd0;
+  --k-aud-bg: #f2ecfb;
+  --k-aud: #7d54c9;
+  --k-zip-bg: #fdf3e0;
+  --k-zip: #a56a0c;
+  --k-code-bg: #e4f2f5;
+  --k-code: #0e7f8c;
+  --k-pdf-bg: #fdecea;
+  --k-pdf: #c9403a;
+  --k-doc-bg: #edf1f7;
+  --k-doc: #3d6396;
+}
+
+/* 护眼（旧前端 id=sepia；新前端 UI 上叫「护眼」） */
+html[data-theme="sepia"],
+html[data-theme="beige"] {
+  --t-bg: #f4efe3;
+  --t-bg2: #faf6ec;
+  --t-surface: #fbf7ee;
+  --t-surface2: #f2ecdd;
+  --t-line: #e4dbc7;
+  --t-line2: #efe7d7;
+  --t-ink: #4b4335;
+  --t-ink2: #6f6656;
+  --t-ink3: #9c9280;
+  --t-ac: #b07d3a;
+  --t-ac2: #8f6329;
+  --t-acw: #efe3cc;
+  --t-onac: #ffffff;
+  --t-nav: rgba(250, 246, 236, 0.94);
+  --t-ov: rgba(67, 61, 49, 0.34);
+  --t-sh: rgba(120, 95, 50, 0.07);
+  --t-icobg: #f1e9d8;
+
+  --k-folder-bg: #f6e7cd;
+  --k-folder: #96631f;
+  --k-img-bg: #eaf1e3;
+  --k-img: #4f7a3a;
+  --k-vid-bg: #efe6f0;
+  --k-vid: #7b4f9b;
+  --k-aud-bg: #f2e9ef;
+  --k-aud: #8a5a86;
+  --k-zip-bg: #f9ebd8;
+  --k-zip: #a8620f;
+  --k-code-bg: #e6eeea;
+  --k-code: #3f7a6a;
+  --k-pdf-bg: #f8e6e0;
+  --k-pdf: #b2543f;
+  --k-doc-bg: #eae6f2;
+  --k-doc: #5f5a9c;
+}
+
+/* 老名字别名：新前端的组件一直写的是 --bg/--surface/--ac 这些 */
+:root {
+  --bg: var(--t-bg);
+  --bg2: var(--t-bg2);
+  --surface: var(--t-surface);
+  --surface2: var(--t-surface2);
+  --line: var(--t-line);
+  --line2: var(--t-line2);
+  --ink: var(--t-ink);
+  --ink2: var(--t-ink2);
+  --ink3: var(--t-ink3);
+  --ac: var(--t-ac);
+  --ac2: var(--t-ac2);
+  --acw: var(--t-acw);
+  --onac: var(--t-onac);
+  --nav: var(--t-nav);
+  --ov: var(--t-ov);
+  --sh: var(--t-sh);
+  --icobg: var(--t-icobg);
+  --r9: 9px;
+  --r11: 11px;
+  --r12: 12px;
+  --r14: 14px;
+  --r16: 16px;
+  --r17: 17px;
+  --r20: 20px;
+  --r22: 22px;
+  --fast: 0.12s;
+  --base: 0.22s;
+  --ease: ease;
+}
+
+html[data-theme] body {
+  background: var(--t-bg);
+  color: var(--t-ink);
+}

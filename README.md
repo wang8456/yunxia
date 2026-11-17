@@ -64,6 +64,7 @@ docker compose up -d
 | 打开听译（本机转写 + 双语字幕），含模型与内存需求 | [docs/transcribe.md](docs/transcribe.md) |
 | 编译网页端 / 打 Android APK | [docs/build-clients.md](docs/build-clients.md) |
 | 报错自查、常见坑 | [docs/faq.md](docs/faq.md) |
+| 看**原版（单机私有部署）**是怎么写的：115 中转、PGS 字幕、subs-hub + asr-worker 双机听译 | [legacy/](legacy/) · [原版听译方案](legacy/docs/听译实现-原版.md) |
 
 ## 配置一览
 

@@ -1,0 +1,33 @@
+{
+ "name": "云匣 · 文件与视频",
+ "short_name": "云匣",
+ "description": "局域网文件管理 + 视频播放 + AI 双语字幕",
+ "start_url": "/",
+ "scope": "/",
+ "display": "fullscreen",
+ "display_override": [
+  "fullscreen",
+  "standalone"
+ ],
+ "background_color": "#ffffff",
+ "theme_color": "#147bff",
+ "orientation": "any",
+ "icons": [
+  {
+   "src": "icon-180.png",
+   "sizes": "180x180",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}

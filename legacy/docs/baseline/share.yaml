@@ -1,0 +1,27 @@
+# dufs 手机共享配置（NAS 容器版）
+# 容器里共享 /data（= NAS 上 /mnt/data/share）
+# 换目录：改 docker run 的 -v 挂载，再 docker restart share
+serve-path: /data
+bind: 127.0.0.1
+port: 15007
+
+allow-upload: true
+allow-delete: true
+allow-search: true
+allow-archive: true
+allow-hash: true
+allow-symlink: true
+enable-cors: true
+
+# 自定义网页界面（AList 风格 + 图片查看器），源码同目录 assets/
+assets: /assets/
+
+# 缩略图目录不显示在列表里（但直链仍可取，网页用它做网格封面）
+hidden:
+  - .thumbs
+  - favicon.ico
+
+# 权限：匿名只能浏览/下载；admin 登录后可上传、改名、删除
+auth:
+  - admin:改成你自己的密码/:rw
+  - '@/'

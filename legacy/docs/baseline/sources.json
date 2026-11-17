@@ -1,0 +1,42 @@
+{
+  "updated": 1792484300,
+  "note": "首页的储存来源清单（NAS 版，跑在容器里）。kind=dufs = 这台服务器自己的共享；kind=webdav = 网盘（走 NAS 上 5008 的 relay.py）；kind=dufs-remote = 别人的 dufs，读它的 ?json。两台电脑不再直连，改走 NAS 上的中转（pcproxy.py：5010=LIFRE / 5011=PXY）——手机 tailscale 到不了电脑，但到得了 NAS。",
+  "sources": [
+    {
+      "id": "nas",
+      "kind": "dufs",
+      "name": "NAS · 本机存储",
+      "subtitle": "共享目录 · NAS 本机磁盘",
+      "icon": "🗄️",
+      "root": "/",
+      "wan": "http://100.64.0.1:5007/"
+    },
+    {
+      "id": "nas115",
+      "kind": "webdav",
+      "name": "NAS · 115网盘",
+      "subtitle": "CloudDrive 网盘 · 只读",
+      "icon": "🟦",
+      "relay": "http://192.168.1.10:5008/",
+      "note_wan": "relay 指向 NAS 本机服务，页面从 Tailscale 打开时自动换成本机地址"
+    },
+    {
+      "id": "pc",
+      "kind": "dufs-remote",
+      "name": "电脑 · LIFRE",
+      "subtitle": "经 NAS 中转 · 需要电脑开机",
+      "icon": "💻",
+      "base": "http://192.168.1.10:5010/",
+      "baseWan": "http://100.64.0.1:5010/"
+    },
+    {
+      "id": "pc2",
+      "kind": "dufs-remote",
+      "name": "电脑 · PXY",
+      "subtitle": "经 NAS 中转 · 同一 WiFi 或 Tailscale",
+      "icon": "💻",
+      "base": "http://192.168.1.10:5011/",
+      "baseWan": "http://100.64.0.1:5011/"
+    }
+  ]
+}

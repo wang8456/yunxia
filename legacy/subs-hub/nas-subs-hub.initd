@@ -1,0 +1,48 @@
+#!/bin/sh
+# NAS 上的听译中枢服务（init.d，busybox ash 风格）
+# 注意：iStoreOS 的 shell 是 ash，没有 timeout/systemd；用 pid 文件管进程。
+
+NAME=subs-hub
+DIR=/mnt/data/home/subs-hub
+PID=$DIR/subs-hub.pid
+LOG=$DIR/hub.log
+
+start() {
+    if [ -f "$PID" ] && kill -0 "$(cat $PID)" 2>/dev/null; then
+        echo "$NAME 已在运行 (pid $(cat $PID))"
+        return 0
+    fi
+    cd "$DIR" || exit 1
+    python3 "$DIR/hub.py" >> "$LOG" 2>&1 &
+    echo $! > "$PID"
+    sleep 1
+    if kill -0 "$(cat $PID)" 2>/dev/null; then
+        echo "$NAME 已启动 (pid $(cat $PID))"
+    else
+        echo "$NAME 启动失败，看 $LOG"
+        return 1
+    fi
+}
+
+stop() {
+    if [ -f "$PID" ]; then
+        kill "$(cat $PID)" 2>/dev/null
+        rm -f "$PID"
+        echo "$NAME 已停止"
+    else
+        echo "$NAME 没在运行"
+    fi
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status)
+        if [ -f "$PID" ] && kill -0 "$(cat $PID)" 2>/dev/null; then
+            echo "$NAME 运行中 (pid $(cat $PID))"
+        else
+            echo "$NAME 未运行"
+        fi ;;
+    *) echo "用法: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
